@@ -1,14 +1,14 @@
 import os
 import numpy as np
 import tensorflow as tf
-import cPickle
-
-BATCH_SIZE = 200
+import pickle
+from PIL import Image
+BATCH_SIZE = 10
 LR = 0.001  # Learning rate
 EPOCH = 600
 LOAD_MODEL = False  # Whether or not continue train from saved model
 TRAIN = True
-HASHING_BITS = 12
+HASHING_BITS = 128
 CURRENT_DIR = os.getcwd()
 
 
@@ -99,9 +99,8 @@ def discriminator(image, hashing_bits,reuse=False, name='discriminator'):
         return ip2
 
 
-
 def read_cifar10_data():
-    data_dir = CURRENT_DIR+'/data/cifar-10-batches-py/'
+    data_dir = CURRENT_DIR+'\\data\\cifar-10-batches-py\\'
     train_name = 'data_batch_'
     test_name = 'test_batch'
     train_X = None
@@ -113,19 +112,19 @@ def read_cifar10_data():
     for i in range(1,6):
         file_path = data_dir+train_name+str(i)
         with open(file_path, 'rb') as fo:
-            dict = cPickle.load(fo)
+            dict = pickle.load(fo,encoding='bytes')
             if  train_X is None:
-                train_X = dict['data']
-                train_Y = dict['labels']
+                train_X = dict[b'data']
+                train_Y = dict[b'labels']
             else:
-                train_X = np.concatenate((train_X, dict['data']), axis=0)
-                train_Y = np.concatenate((train_Y, dict['labels']), axis=0)
+                train_X = np.concatenate((train_X, dict[b'data']), axis=0)
+                train_Y = np.concatenate((train_Y, dict[b'labels']), axis=0)
     # test_data
     file_path = data_dir + test_name
     with open(file_path, 'rb') as fo:
-        dict = cPickle.load(fo)
-        test_X = dict['data']
-        test_Y = dict['labels']
+        dict = pickle.load(fo,encoding='bytes')
+        test_X = dict[b'data']
+        test_Y = dict[b'labels']
     train_X = train_X.reshape((50000, 3, 32, 32)).transpose(0, 2, 3, 1).astype(np.float)
     # train_Y = train_Y.reshape((50000)).astype(np.float)
     test_X = test_X.reshape((10000, 3, 32, 32)).transpose(0, 2, 3, 1).astype(np.float)
@@ -156,8 +155,8 @@ def hashing_loss(image,label,alpha,m):
 def train():
     train_dir  = CURRENT_DIR + '/logs/'
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    image = tf.placeholder(tf.float32, [BATCH_SIZE, 32,32,3], name='image')
-    label = tf.placeholder(tf.float32, [BATCH_SIZE,10], name='label')
+    image = tf.placeholder(tf.float32, [BATCH_SIZE, 227,227,3], name='image')
+    label = tf.placeholder(tf.float32, [BATCH_SIZE,102], name='label')
 
     alpha = tf.constant(0.01,dtype=tf.float32,name='tradeoff')
     # set m = 2*HASHING_BITS
@@ -195,15 +194,26 @@ def train():
 
         start = int(global_step)
 
-    train_x, train_y, test_x, test_y = read_cifar10_data()
+    train_x, train_y = readImageData('C:\\Users\\Administrator\\Desktop\\102')
+    train_x=np.asarray(train_x)
+    train_y=np.asarray(train_y)
+    huffle_indices = np.random.permutation(np.arange(len(train_x)))
+    train_x=train_x[huffle_indices]
+    train_y=train_y[huffle_indices]
+    train_y_vec = np.zeros((len(train_y), 102), dtype=np.float)
+
+    for i, label1 in enumerate(train_y):
+        train_y_vec[i, int(train_y[i])] = 1.  # y_vec[1,3] means #2 row, #4column
+
 
     for epoch in range(start,EPOCH):
 
-        batch_idxs = 50000/BATCH_SIZE
+        batch_idxs = int(len(train_x)/BATCH_SIZE)
 
         for idx in range(start, batch_idxs):
-            image_idx = train_x[idx*BATCH_SIZE:(idx+1)*BATCH_SIZE]
-            label_idx = train_y[idx*BATCH_SIZE:(idx+1)*BATCH_SIZE]
+            image_idx = get_batch_image_path(train_x,idx)
+            image_idx=get_batch_image_array(image_idx)
+            label_idx = train_y_vec[idx*BATCH_SIZE:(idx+1)*BATCH_SIZE]
 
             sess.run([d_optim],feed_dict={image: image_idx, label:label_idx})
             # writer.add_summary(summary_str, idx + 1)
@@ -216,7 +226,7 @@ def train():
         if (epoch+1) % 10 == 0:
             checkpoint_path = os.path.join(train_dir,'my_DSH_model.ckpt')
             saver.save(sess, checkpoint_path, global_step=epoch + 1)
-            print '*********    model saved    *********'
+            print ('*********    model saved    *********')
 
 
     sess.close()
@@ -231,12 +241,102 @@ def toBinaryString(binary_like_values):
             list_string_binary.append(str)
         return  list_string_binary
 
+def readImageData(path='D:\\sss'):
+    test_image=[]
+    test_label=[]
+    images_path=path
+    listDirs=os.listdir(images_path)
+    class_index=0
+    for listDir in listDirs:
+        list_path=os.path.join(images_path,listDir)
+        for image in os.listdir(list_path):
+            image_path=os.path.join(list_path,image)
+            if os.path.isfile(image_path):
+                test_image.append(image_path)
+                test_label.append(class_index)
+        class_index+=1
+    return test_image,test_label
+
+def get_batch_image_path(test_image,start):
+    end = (start*10 + 10)
+    if start < end:
+        return test_image[start*10:end]
+    # 当 start > end 时，从头返回
+    return np.concatenate([test_image[start:], test_image[:end]])
+
+def vectorize_imgs(img_path_list):
+    image_arr_list = []
+    for img_path in img_path_list:
+        if os.path.exists(img_path):
+            img = Image.open(img_path)
+            img_arr = np.asarray(img, dtype='float32')
+            if len(img_arr.shape) != 3:
+                # img = img.convert('L')
+                # img_arr = np.asarray(img, dtype='float32')
+                img_arr = np.expand_dims(img_arr, axis=2)
+                img_arr = np.concatenate((img_arr, img_arr, img_arr), axis=-1)
+                print(img_arr.shape)
+                print('将一维修改为三维: %s' % img_path)
+            # 均值化
+            # mean_image=np.mean(img_arr,axis=0)
+            # img_arr=img_arr-mean_image
+            img_arr.resize((227, 227,3))
+            image_arr_list.append(img_arr)
+            # if img_arr.shape[0] != 512:
+            #     print(img_arr.shape)
+            #     print('当图片不是512: %s' % img_path)
+        else:
+            print(img_path)
+    return image_arr_list
+def get_batch_image_array(batch_image):
+    batImage=vectorize_imgs(batch_image)
+    b=np.asarray(batImage, dtype='float32') / 255.
+    return b
+
+def evaluate_1():
+    checkpoint_dir = CURRENT_DIR + '/logs/'
+
+    image = tf.placeholder(tf.float32, [BATCH_SIZE, 32, 32, 3], name='image')
+    D = discriminator(image, 128)
+    res = tf.sign(D)
+
+    print("Reading checkpoints...")
+    ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+    saver = tf.train.Saver(tf.all_variables())
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(0)
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = 0.8
+    sess = tf.InteractiveSession(config=config)
+
+    test_x,test_y = readImageData()
+    file_res = open('result_1.txt', 'w')
+    # sys.stdout = file_res
+    if ckpt and ckpt.model_checkpoint_path:
+        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+        global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
+        saver.restore(sess, os.path.join(checkpoint_dir, ckpt_name))
+        print('Loading success, global_step is %s' % global_step)
+        for i in range(int( len(test_y)/ 10)):
+            image_paths=get_batch_image_path(test_image=test_x,start=i)
+            image_array=get_batch_image_array(image_paths)
+            eval_sess = sess.run(D, feed_dict={image:image_array})
+            # print(eval_sess)
+            w_res = toBinaryString(eval_sess)
+            w_label = test_y[i*10:i*10+10]
+            for j in range(10):
+                file_res.write(w_res[j] + '\t' + str(w_label[j]) + '\n')
+    # eval_sess = sess.run(res, feed_dict={image: test_x[:BATCH_SIZE]})
+    # eval_sess = sess.run(res, feed_dict={image: test_x[:BATCH_SIZE]})
+    # print(eval_sess)
+    file_res.close()
+    sess.close()
+
 def evaluate():
     checkpoint_dir = CURRENT_DIR + '/logs/'     
-    
+
     image = tf.placeholder(tf.float32, [BATCH_SIZE, 32, 32, 3], name='image')
     D = discriminator(image,HASHING_BITS)
-    res = tf.sign(D)                     
+    res = tf.sign(D)
     
     print("Reading checkpoints...")
     ckpt = tf.train.get_checkpoint_state(checkpoint_dir)                
@@ -254,14 +354,14 @@ def evaluate():
         global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
         saver.restore(sess, os.path.join(checkpoint_dir, ckpt_name))
         print('Loading success, global_step is %s' % global_step)
-        for i in range(10000/BATCH_SIZE):
+        for i in range(int(10000/BATCH_SIZE)):
             eval_sess = sess.run(D, feed_dict={image: test_x[i*BATCH_SIZE:(i+1)*BATCH_SIZE]})
            # print(eval_sess)
             w_res = toBinaryString(eval_sess)
             w_label = np.argmax(test_y[i*BATCH_SIZE:(i+1)*BATCH_SIZE],axis=1)
             for j in range(BATCH_SIZE):
                 file_res.write(w_res[j]+'\t'+str(w_label[j])+'\n')
-        for i in range(50000/BATCH_SIZE):
+        for i in range(int(50000/BATCH_SIZE)):
             eval_sess = sess.run(D, feed_dict={image: train_x[i*BATCH_SIZE:(i+1)*BATCH_SIZE]})
            # print(eval_sess)
             w_res = toBinaryString(eval_sess)
@@ -281,4 +381,4 @@ if __name__ == '__main__':
     if TRAIN:
         train()
     else:
-        evaluate()
+        evaluate_1()
